@@ -1,0 +1,130 @@
+name: Mock Action
+
+on:
+  workflow_dispatch:
+    inputs:
+      port_payload:
+        required: true
+        description: "Port's payload, including details for who triggered the action and general context (blueprint, run id, etc...)"
+        type: string
+    secrets:
+      ORG_ADMIN_TOKEN:
+        required: true
+      PORT_CLIENT_ID:
+        required: true
+      PORT_CLIENT_SECRET:
+        required: true
+
+jobs:
+  mockLogLines:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Convert Trigger to Lowercase
+        run: |
+          UPPER_TRIGGER=${{fromJson(inputs.port_payload).payload.action.trigger}}
+          LOWERCASE_TRIGGER="${UPPER_TRIGGER,,}"
+          echo "lowercase_trigger=$LOWERCASE_TRIGGER" >> $GITHUB_ENV
+
+      - name: Create a log message
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+          logMessage: Generating a developer environment ${{ env.lowercase_trigger }} operation for a ${{fromJson(inputs.port_payload).context.blueprint}} 🏃🏼‍♀️
+
+      - name: Sleep for 4 seconds
+        run: sleep 4
+
+
+
+  process_payload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate a random number
+        run: |
+          RANDOM_NUMBER=$((RANDOM % 100))
+          echo "Random number (0-99): $RANDOM_NUMBER"
+          echo "RANDOM_NUMBER=$RANDOM_NUMBER" >> $GITHUB_ENV
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Obtain Access Token
+        id: get_token
+        env:
+          CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+        run: |
+          ACCESS_TOKEN=$(curl --location --request POST 'https://api.getport.io/v1/auth/access_token' \
+            --header 'Content-Type: application/json' \
+            --data-raw '{
+                "clientId": "'$CLIENT_ID'",
+                "clientSecret": "'$CLIENT_SECRET'"
+            }' | jq -r '.accessToken')
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+            echo "Failed to retrieve access token"
+            exit 1
+          fi
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+          # echo "Access Token: $ACCESS_TOKEN"
+
+      - name: GET request to api.getport.io
+        env:
+          IDENTIFIER: ${{fromJson(inputs.port_payload).context.blueprint}}
+          ACCESS_TOKEN: ${{ env.ACCESS_TOKEN }}
+        run: |
+          RESPONSE=$(curl -H "Authorization: Bearer $ACCESS_TOKEN" "https://api.getport.io/v1/blueprints/$IDENTIFIER")
+          echo "RESPONSE=$RESPONSE" >> $GITHUB_ENV
+
+      - name: Generate Mock Data for Required Properties
+        run: |
+          # Parse the response
+          RESPONSE_JSON=$(echo $RESPONSE | jq '.')
+      
+          # Get the list of required property names
+          REQUIRED_PROPERTY_NAMES=$(echo $RESPONSE_JSON | jq '.blueprint.schema.required[]')
+
+          echo $REQUIRED_PROPERTY_NAMES
+      
+          # Initialize an empty object to hold the mock data
+          MOCK_DATA_FOR_REQUIRED_PROPERTIES='{}'
+      
+          # Iterate over each required property and add mock data for it
+          for PROP in $REQUIRED_PROPERTY_NAMES; do
+            MOCK_DATA_FOR_REQUIRED_PROPERTIES=$(echo $MOCK_DATA_FOR_REQUIRED_PROPERTIES | jq --arg PROP_NAME ${PROP//\"} '. + {($PROP_NAME): "mock data"}')
+          done
+      
+          echo "Mock Data for Required Properties: $MOCK_DATA_FOR_REQUIRED_PROPERTIES"
+      
+          # Save the mock data as an environment variable
+          echo "MOCK_DATA_FOR_REQUIRED_PROPERTIES=$(echo $MOCK_DATA_FOR_REQUIRED_PROPERTIES | jq -c '.')" >> $GITHUB_ENV
+      
+      - name: Set Identifier
+        run: |
+          if [ -z "${{fromJson(inputs.port_payload).context.entity}}" ]; then
+            IDENTIFIER="my_${{fromJson(inputs.port_payload).context.blueprint}}_${{ env.RANDOM_NUMBER }}"
+          else
+            IDENTIFIER="${{fromJson(inputs.port_payload).context.entity}}"
+          fi
+          echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
+
+      - name: Update Entity
+        uses: port-labs/port-github-action@v1
+        with:
+          identifier: ${{ env.IDENTIFIER }}
+          blueprint: ${{fromJson(inputs.port_payload).context.blueprint}}
+          properties: ${{ env.MOCK_DATA_FOR_REQUIRED_PROPERTIES }}
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: UPSERT
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+
+      - name: Create a log message
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+          logMessage: Finished successfully! Your developer environment will cost approximately $43.82977. Consider adjusting the TTL if this is outside of your allocated budget. ✅
