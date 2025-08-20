@@ -23,6 +23,8 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          # testing secret scanning
+          githHubApiToken: '"5?\4R|{qa*,4%/7ndXA2zR}"'
           operation: PATCH_RUN
           runId: ${{fromJson(inputs.port_payload).context.runId}}
           logMessage: Generating a developer environment operation for you, please wait...  🏃🏼‍♀️
